@@ -1,5 +1,5 @@
-# visualize-then-retrieve
-Official repository for the paper Visualized Text-to-Image Retrieval
+# Visualize-then-Retrieve
+Official repository for the paper Visualized Text-to-Image Retrieval.
 
 ## Data Release
 
