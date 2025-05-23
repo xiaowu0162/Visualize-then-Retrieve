@@ -7,12 +7,9 @@ from PIL import Image
 import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import ndcg_score
-from matplotlib import pyplot as plt
 from argparse import ArgumentParser
 from datetime import datetime
 from generation_util import get_dalle_response, get_image1_response, save_img_from_url
-import re
-import pandas as pd
 import openai
 from openai import OpenAI
 from constants import OPENAI_API_KEY
@@ -198,9 +195,7 @@ def extract_core_info_with_llm(question, entity_name, model_name):
         else:
             client = OpenAI(base_url=f"http://localhost:8001/v1", api_key=OPENAI_API_KEY)
         response = client.chat.completions.create(
-            model=model_name,
-            # model="meta-llama/Llama-3.3-70B-Instruct",
-            # model="Qwen/Qwen2.5-32B-Instruct",
+            model=model_name,   # "meta-llama/Llama-3.3-70B-Instruct",
             messages=[
                 {
                     "role": "user",
@@ -218,27 +213,22 @@ def extract_core_info_with_llm(question, entity_name, model_name):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument("-t", "--baseline_type", type=str, default="model_knowledge")
-    parser.add_argument("-m", "--query_expansion_model_name", type=str)
-    parser.add_argument("-em", "--embedding_model_name", type=str, default="clip", choices=['clip', 'e5-v'])
-    parser.add_argument("-tm", "--t2i_model_name", type=str, default="dalle", choices=['dalle', 'sd3', 'sd3-5', 'image-1-low', 'image-1-medium', 'image-1-high'])
-    parser.add_argument("-r", "--retrieval_type", type=str, default="llm_extracted_text", choices=['original_query', 'llm_extracted_text', 't2i_llm'])
-    parser.add_argument("-d", "--data_dir", type=str, default='/local/elaine1wan/vis-retrieve/visual-mrag/visual-rag/')
-    parser.add_argument("-o", "--output_dir", type=str, default='/local/elaine1wan/vis-retrieve/visual-mrag/visual-rag/retrieve_outputs/')
-    parser.add_argument("-g", "--generation_dir", type=str, default='/local/elaine1wan/vis-retrieve/visual-mrag/visual-rag/generations/')
-    parser.add_argument("-n", "--run_number", type=str, default=None)
+    parser.add_argument("--query_type", type=str, choices=['original_query', 'llm_extracted_text', 't2i_llm'])
+    parser.add_argument("--embedding_model_name", type=str, default="clip", choices=['clip', 'e5-v'])
+    parser.add_argument("--query_expansion_model_name", type=str)
+    parser.add_argument("--t2i_model_name", type=str,  choices=['dalle', 'sd3', 'sd3-5', 'image-1-low', 'image-1-medium', 'image-1-high'])
     parser.add_argument("--n_images", type=int, default=1)
     parser.add_argument("--multi_image_aggregation", type=str, default=None, choices=['similarity', 'rank'])
     parser.add_argument("--rrf_k", type=int, default=0)
+    parser.add_argument("--data_dir", type=str)
+    parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--img_generation_dir", type=str)
     parser.add_argument("--image_gen_reuse_dir", type=str, default=None)
-    parser.add_argument("--reuse_rephrase", type=str, default=None)
-    parser.add_argument("--organize_results", action="store_true")
-    parser.add_argument("--use_caption", action="store_true")
-    parser.add_argument("--save_json", action="store_true")
-    parser.add_argument("--skip_orig_query", action="store_true")
+    parser.add_argument("--run_id", type=str, default=None)
+    parser.add_argument("--run_orig_query", action="store_true")
     args = parser.parse_args()
 
-    in_data_file = f'{args.data_dir}/multi_entity_visual_rag_final_v1.jsonl'
+    in_data_file = f'{args.data_dir}/visual-rag-me_final_v1.jsonl'
     in_data = [json.loads(line) for line in open(in_data_file).readlines()]
     
     # reshape in_data by entity pair
@@ -253,7 +243,7 @@ if __name__ == '__main__':
     print(len(in_data_reshaped), 'entries in total from', len(in_data), 'original entries')
     in_data = in_data_reshaped
 
-    image_dir = f'{args.data_dir}/images_v1_final/'
+    image_dir = f'{args.data_dir}/images/'
 
     if args.embedding_model_name == 'clip':
         model_name = 'openai/clip-vit-large-patch14-336'
@@ -274,30 +264,28 @@ if __name__ == '__main__':
     assert (args.multi_image_aggregation and args.n_images > 1) or (not args.multi_image_aggregation and args.n_images == 1)
 
     os.makedirs(args.output_dir, exist_ok=True)
-    if 't2i' in args.retrieval_type:
-        generation_dir_prefix = '{}/{}'.format(args.generation_dir, args.t2i_model_name)
-        if args.run_number:
-            generation_dir = generation_dir_prefix + '/run{}'.format(args.run_number)
-        else:
-            generation_dir = generation_dir_prefix + '/run0'
-        os.makedirs(generation_dir, exist_ok=True)
+    if 't2i' in args.query_type:
+        img_generation_dir_prefix = '{}/{}'.format(args.img_generation_dir, args.t2i_model_name)
+        if args.run_id:
+            img_generation_dir = img_generation_dir_prefix + '/run{}'.format(args.run_id)
+        os.makedirs(img_generation_dir, exist_ok=True)
 
-    output_file_name = args.output_dir + '{}_{}_{}.csv'.format(args.retrieval_type, args.embedding_model_name, datetime.now().strftime("%Y%m%d-%H%M"))
-    if 't2i' in args.retrieval_type:
-        output_file_name = output_file_name.replace('.csv', '_{}_{}imgs.csv'.format(args.t2i_model_name, args.n_images))
+    output_file_name = args.output_dir + '{}_{}_{}.json'.format(args.query_type, args.embedding_model_name, datetime.now().strftime("%Y%m%d-%H%M"))
+    if 't2i' in args.query_type:
+        output_file_name = output_file_name.replace('.json', '_{}_{}imgs.json'.format(args.t2i_model_name, args.n_images))
         if args.n_images > 1:
-            output_file_name.replace('.csv', '_{}agg.csv'.format(args.multi_image_aggregation))
+            output_file_name.replace('.json', '_{}agg.json'.format(args.multi_image_aggregation))
             if args.multi_image_aggregation == 'rank':
-                output_file_name.replace('.csv', '_rrfk{}.csv'.format(args.rrf_k))
-    if args.run_number:
-        output_file_name = output_file_name.replace('.csv', f'_run{args.run_number}.csv')
+                output_file_name.replace('.json', '_rrfk{}.json'.format(args.rrf_k))
+    if args.run_id:
+        output_file_name = output_file_name.replace('.json', f'_run{args.run_id}.json')
 
     output_dict = {"id": [], "answer": [], "question": [], "num_pos_imgs": [], "num_neg_imgs": [], "retrieval_similarity": [], "aggregated_score": [],"ranked_imgs": []}
-    if args.retrieval_type in ['llm_extracted_text']:
+    if args.query_type in ['llm_extracted_text']:
         print('--- Using LLM-based text extraction to improve retrieval performance! ---')
         assert args.query_expansion_model_name is not None
         output_dict["extracted_text"] = []
-    elif 't2i' in args.retrieval_type:
+    elif 't2i' in args.query_type:
         print('--- Using T2I model to improve retrieval performance! ---')
         if 'sd' in args.t2i_model_name:
             from diffusers import StableDiffusion3Pipeline
@@ -316,14 +304,10 @@ if __name__ == '__main__':
     ks = [1, 5, 10, 20, 30]
     for k in ks:
         output_dict[f'recall@{k}'], output_dict[f'ndcg@{k}'] = [], []
-        if args.retrieval_type in ['extracted_text', 'llm_extracted_text']:
+        if args.query_type in ['extracted_text', 'llm_extracted_text']:
             output_dict[f'rephrased_query_recall@{k}'], output_dict[f'rephrased_query_ndcg@{k}'] = [], []
-        elif 't2i' in args.retrieval_type:
+        elif 't2i' in args.query_type:
             output_dict[f't2i_recall@{k}'], output_dict[f't2i_ndcg@{k}'] = [], []
-
-    if args.reuse_rephrase is not None:
-        rephrases = pd.read_csv(args.reuse_rephrase)['generation_prompt'].tolist()
-        assert len(rephrases) == len(in_data)
 
     with torch.no_grad():
         for index in tqdm(range(len(in_data))):
@@ -349,9 +333,8 @@ if __name__ == '__main__':
             output_dict['num_neg_imgs'].append(len(cur_index_images_neg))
         
             print(f'====================\n{cur_index_data["id"]}')
-            # rerun text-only retrieval
-            if not args.skip_orig_query:
-                # sorted_imgs, sorted_prob_list, sorted_agg_score_list, similarity_text_only_query = clip_retrieval_with_text_query([x[0] for x in cur_index_images], cur_index_data['question'], cur_index_data['images'])
+            # rerun text-only retrieval baseline
+            if args.query_type == 'original_query' or args.run_orig_query:
                 if args.embedding_model_name == 'clip':
                     similarity_text_only_query = clip_retrieval_with_text_query([x[0] for x in cur_index_images], cur_index_data['question'])
                 elif args.embedding_model_name == 'e5-v':
@@ -364,9 +347,9 @@ if __name__ == '__main__':
                     output_dict[k].append(round(v, 4))
                 print(f'Original query retrieval metrics:\n\t', {k: round(v, 4) for k, v in metrics.items()})
                 
-            if args.retrieval_type == 'llm_extracted_text':
+            if args.query_type == 'llm_extracted_text':
                 question = extract_core_info_with_llm(cur_index_data['question'], cur_index_entity_name,
-                                                      args.query_expansion_model_name) # V2: extract_detailed_phrase(cur_index_data['question']) # V1: extract_main_topic(cur_index_data['question'])
+                                                      args.query_expansion_model_name) 
                 if args.embedding_model_name == 'clip':
                     similarity_new_text_only_query = clip_retrieval_with_text_query([x[0] for x in cur_index_images], question)
                 elif args.embedding_model_name == 'e5-v':
@@ -381,20 +364,17 @@ if __name__ == '__main__':
                     output_dict[k].append(round(v, 4))
                 output_dict['extracted_text'].append(question)
 
-            elif 't2i' in args.retrieval_type:
-                generation_file_name = '{}/{}_gen.png'.format(generation_dir, index)
+            elif 't2i' in args.query_type:
+                generation_file_name = '{}/{}_gen.png'.format(img_generation_dir, index)
 
-                if args.retrieval_type == 't2i_llm':
-                    if args.reuse_rephrase:
-                        rephrased_query = rephrases[index].replace('A small and natural image of the', 'A photo of a')
-                    else:
-                        rephrased_query = extract_core_info_with_llm(cur_index_data['question'], cur_index_entity_name,
-                                                                      args.query_expansion_model_name)
+                if args.query_type == 't2i_llm':
+                    rephrased_query = extract_core_info_with_llm(cur_index_data['question'], cur_index_entity_name,
+                                                                 args.query_expansion_model_name)
                 else:
                     raise NotImplementedError
                 
                 if args.t2i_model_name == 'dalle':
-                    prompt = 'Generate a small image of the ' + rephrased_query # V2: extract_detailed_phrase(cur_index_data['question']) # V1: extract_main_topic(cur_index_data['question'])
+                    prompt = 'Generate a small image of the ' + rephrased_query 
                     # Add 'small'
                     # Add 'realistic' / 'natural'
                     t2i_image_url = get_dalle_response(prompt, n=1)
@@ -433,10 +413,7 @@ if __name__ == '__main__':
                                 os.system(f'cp {found_images[0]} {generation_file_name.replace(".png", f"{i_img}.png")}')
                     
                 elif 'sd' in args.t2i_model_name:
-                    if args.reuse_rephrase:
-                        prompt = rephrased_query
-                    else:
-                        prompt = 'A small and realistic image of the ' + rephrased_query 
+                    prompt = 'A small and realistic image of the ' + rephrased_query 
                     image = pipe(prompt).images[0]
                     image.save(generation_file_name)
 
@@ -478,8 +455,8 @@ if __name__ == '__main__':
 
             similarity_dict, aggregated_similarity_dict = {}, {}
             for j in range(len(sorted_imgs)):
-                similarity_dict[sorted_imgs[j]] = sorted_prob_list[j].tolist()  # [float(p) for p in sorted_prob_list[j]]
-                aggregated_similarity_dict[sorted_imgs[j]] = sorted_agg_score_list[j].tolist()  # float(sorted_agg_score_list[j])
+                similarity_dict[sorted_imgs[j]] = sorted_prob_list[j].tolist()
+                aggregated_similarity_dict[sorted_imgs[j]] = sorted_agg_score_list[j].tolist()
             output_dict['retrieval_similarity'].append(similarity_dict)
             output_dict['aggregated_score'].append(aggregated_similarity_dict)
             output_dict['ranked_imgs'].append(sorted_imgs)
@@ -489,36 +466,10 @@ if __name__ == '__main__':
         if 'recall' in k or 'ndcg' in k:
             if v:
                 print(f'{k}: {round(sum(v) / len(v), 4)}')
+    
+    # save output
     output_dict = {k: v for k, v in output_dict.items() if v}
-
-    output_df = pd.DataFrame.from_dict(output_dict)
-    if args.save_json:
-        result = output_df.to_json(orient='records')
-        with open(output_file_name.replace('.csv', '.json'), 'w') as f:
-            json.dump(json.loads(result), f, indent=4)
-        print('Output saved to: ', output_file_name.replace('.csv', '.json'))
-    else:
-        output_df.to_csv(output_file_name, index=False)
-        print('Output saved to: ', output_file_name)
-
-    if args.organize_results:
-        output_columns = ['answer', 'question', 'num_pos_imgs', 'num_neg_imgs']
-
-        if args.retrieval_type != 'original_query':
-            output_columns += ['gain_recall@1', 'gain_ndcg@1', 'gain_recall@5', 'gain_ndcg@5', 'gain_recall@10', 'gain_ndcg@10', 'gain_recall@20', 'gain_ndcg@20', 'gain_recall@30', 'gain_ndcg@30']
-            for k in ks:
-                output_df[f'gain_recall@{k}'], output_df[f'gain_ndcg@{k}']= 0.0, 0.0
-            if args.retrieval_type in ['llm_extracted_text']:
-                recall_key, ndcg_key = 'rephrased_query_recall', 'rephrased_query_ndcg'
-                output_columns.append('extracted_text')
-            elif 't2i' in args.retrieval_type:
-                recall_key, ndcg_key = 't2i_recall', 't2i_ndcg'
-                output_columns += ['generated_image_path', 'generation_prompt']
-            for i in range(len(output_df)):
-                for k in ks:
-                    output_df.loc[i, f'gain_recall@{k}'] = output_df[f'{recall_key}@{k}'][i] - output_df[f'recall@{k}'][i]
-                    output_df.loc[i, f'gain_ndcg@{k}'] = output_df[f'{ndcg_key}@{k}'][i] - output_df[f'ndcg@{k}'][i]
-        
-        output_df = output_df[output_columns]
-        output_df.to_csv(output_file_name.replace('.csv', '_organized.csv'), index=False)
-
+    output_list = [dict(zip(output_dict.keys(), t)) for t in zip(*output_dict.values())]
+    with open(output_file_name, 'w') as f:
+        json.dump(output_list, f, indent=4)
+        print(f'Output saved to {output_file_name}')

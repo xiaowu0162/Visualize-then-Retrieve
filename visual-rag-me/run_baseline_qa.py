@@ -1,18 +1,15 @@
 import os
 import json
 import torch
-import numpy as np
 from tqdm import tqdm
 from argparse import ArgumentParser
 from datetime import datetime
-from generation_util import generate_visual_rag_answer_chatgpt, generate_multi_entity_visual_rag_answer_chatgpt, generate_chatgpt_original, generate_response_phi3v, generate_response_qwen
+from generation_util import generate_visual_rag_answer_chatgpt, generate_multi_entity_visual_rag_answer_chatgpt, generate_chatgpt_original
 import re
 import pandas as pd
-from prompts import EVAL_PROMPT, EVAL_PROMPT_DEMO, ZEROSHOT_QA_PROMPT, QA_PROMPT_MULTI_ENTITY_COT_V1
-from PIL import Image 
+from prompts import EVAL_PROMPT, EVAL_PROMPT_DEMO, ZEROSHOT_QA_PROMPT, QA_PROMPT_MULTI_ENTITY_COT
 import random
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" 
 now = datetime.now()
 
 def find_datetime_str(file_name):
@@ -37,21 +34,17 @@ def extract_score(text):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument("-if", "--input_file", type=str, default='/local/elaine1wan/vis-retrieve/visual-mrag/visual-rag/retrieve_outputs/t2i_llm_clip_20250506-2152_image-1-low_2imgs_test_run20250506-2152.json')
-    # parser.add_argument("-m", "--model_name", type=str, default="gpt-4o-mini")
-    parser.add_argument("-b", "--baseline_type", type=str, default="oracle")
-    parser.add_argument("-d", "--data_dir", type=str, default='/local/elaine1wan/vis-retrieve/visual-mrag/visual-rag/')
-    parser.add_argument("-o", "--output_dir", type=str, default='/local/elaine1wan/vis-retrieve/visual-mrag/visual-rag/qa_outputs/')
-    parser.add_argument("--model_name_short", type=str, choices=['gpt4o', 'gpt4omini', 'gpt4.1', 'phi3v', 'qwen'])
-    parser.add_argument("--test", action="store_true")
+    parser.add_argument("-if", "--input_file", type=str)
+    parser.add_argument("-b", "--baseline_type", type=str)
+    parser.add_argument("-d", "--data_dir", type=str)
+    parser.add_argument("-o", "--output_dir", type=str)
+    parser.add_argument("-m", "--model_name_short", type=str, choices=['gpt4o', 'gpt4omini', 'gpt4.1'])
     parser.add_argument("--skip_generation", action="store_true")
     parser.add_argument("--do_evaluate", action="store_true")
     args = parser.parse_args()
-    in_data_file = f'{args.data_dir}/multi_entity_visual_rag_final_v1.jsonl'
-    image_dir = f'{args.data_dir}/images_v1_final/'
+    in_data_file = f'{args.data_dir}/visual-rag-me_final_v1.jsonl'
+    image_dir = f'{args.data_dir}/images/'
     in_data = [json.loads(line) for line in open(in_data_file).readlines()]
-    if args.test:
-        in_data = in_data[:50]
     
     if args.skip_generation:
         print('Using generated model answers for direct evaluation...')
@@ -70,9 +63,6 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError
     
-    if args.test:
-        output_file_name = output_file_name.replace('.csv', '_test.csv')
-
     if args.do_evaluate:
         print('--- Running QA evaluation ---')
         output_dict['llm_eval_output'] = [] # output_dict['llm_eval_score'] = []
@@ -93,10 +83,6 @@ if __name__ == '__main__':
     with torch.no_grad():
         acc = []
         for index in tqdm(range(start, len(in_data))):
-            torch.cuda.empty_cache()
-            torch.cuda.empty_cache()
-            torch.cuda.empty_cache()
-
             if start != 0:
                 print('---Resuming from Index {}---'.format(start))
             cur_index_data = in_data[index]
@@ -117,44 +103,31 @@ if __name__ == '__main__':
                         used_images_1 = random.sample(used_images_1, 1)
                         used_images_2 = random.sample(used_images_2, 1)
                     output_dict['oracle_image'].append(used_images_1 + used_images_2)
-                    qa_prompt = QA_PROMPT_MULTI_ENTITY_COT_V1
+                    qa_prompt = QA_PROMPT_MULTI_ENTITY_COT
                 elif args.baseline_type == 'rand_irrelev':
                     used_images_1 = random.sample([img for img in cur_index_data['images']['entity_1'].keys() if cur_index_data['images']['entity_1'][img] == 0], 1)
                     used_images_2 = random.sample([img for img in cur_index_data['images']['entity_2'].keys() if cur_index_data['images']['entity_2'][img] == 0], 1)
                     output_dict['irrelevant_image'].append(used_images_1 + used_images_2)
-                    qa_prompt = QA_PROMPT_MULTI_ENTITY_COT_V1
+                    qa_prompt = QA_PROMPT_MULTI_ENTITY_COT
                 elif args.baseline_type == 'zero_shot':
                     qa_prompt = ZEROSHOT_QA_PROMPT
                 else:
-                    qa_prompt = QA_PROMPT_MULTI_ENTITY_COT_V1
+                    qa_prompt = QA_PROMPT_MULTI_ENTITY_COT
                     
                 output_dict['question'].append(cur_index_data['question'])
                 output_dict['answer'].append(cur_index_data['answer'])
                 # species_name = ' '.join(list(in_data[index]['images'].keys())[0].split('/')[-2].split('_')[-2:])
                 if args.baseline_type == 'zero_shot':
-                    if 'phi3v' in args.model_name_short or 'qwen' in args.model_name_short:
-                        qa_prompt = qa_prompt + ' ' + cur_index_data['question']
-                        model_answer = generate_function(qa_prompt, [], processor, model)
-                    else:
-                        model_answer = generate_visual_rag_answer_chatgpt(qa_prompt, cur_index_data['question'], [], model=args.model_name_short)
+                    model_answer = generate_visual_rag_answer_chatgpt(qa_prompt, cur_index_data['question'], [], model=args.model_name_short)
                 else:
-                    if 'phi3v' in args.model_name_short or 'qwen' in args.model_name_short:
-                        qa_prompt = qa_prompt + ' ' + cur_index_data['question']
-                        model_answer = generate_function(qa_prompt, [f'{image_dir}/{img}' for img in used_images], processor, model)
-                    else:
-                        # model_answer = generate_multi_entity_visual_rag_answer_chatgpt(qa_prompt, cur_index_data['question'], 
-                        #                                                                [f'{image_dir}/{img}' for img in used_images], 
-                        #                                                                model=args.model_name_short)
-                        model_answer = generate_multi_entity_visual_rag_answer_chatgpt(qa_prompt, cur_index_data['question'], 
-                                                                                       species_name_1, [f'{image_dir}/{img}' for img in used_images_1], 
-                                                                                       species_name_2, [f'{image_dir}/{img}' for img in used_images_2], 
-                                                                                       model=args.model_name_short)
+                    model_answer = generate_multi_entity_visual_rag_answer_chatgpt(qa_prompt, cur_index_data['question'], 
+                                                                                   species_name_1, [f'{image_dir}/{img}' for img in used_images_1], 
+                                                                                   species_name_2, [f'{image_dir}/{img}' for img in used_images_2], 
+                                                                                   model=args.model_name_short)
                 
                 output_dict['model_answer'].append(model_answer)
 
             if args.do_evaluate:
-                # print(EVAL_PROMPT + EVAL_PROMPT_DEMO + '\nQuestion: ' + cur_index_data['question'] + '\nStudent Answer: ' + model_answer)
-                # exit()
                 try:
                     model_answer = model_answer.split('Answer: ')[1]
                 except IndexError:
@@ -176,8 +149,6 @@ if __name__ == '__main__':
         except:
             pass
 
-    if args.test:
-        for k in output_dict.keys():
-            output_dict[k] = output_dict[k][:50]
+    os.makedirs(args.output_dir, exist_ok=True)
     output_df = pd.DataFrame.from_dict(output_dict)
     output_df.to_csv(output_file_name, index=False)

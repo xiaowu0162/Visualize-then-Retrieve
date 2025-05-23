@@ -34,22 +34,23 @@ def extract_score(text):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument("-k", "--top_k", type=int, default=5)
-    parser.add_argument("-r", "--run_number", type=str, default=None)
-    parser.add_argument("-if", "--input_file", type=str, default=None)
-    parser.add_argument("-m", "--model_name", type=str)
-    parser.add_argument("-d", "--data_dir", type=str)
-    parser.add_argument("-o", "--output_dir", type=str)
+    parser.add_argument("--top_k", type=int)
+    parser.add_argument("--run_id", type=str, default=None)
+    parser.add_argument("--retrieval_log", type=str, default=None)
+    parser.add_argument("--model_name", type=str)
+    parser.add_argument("--data_dir", type=str)
+    parser.add_argument("--output_dir", type=str)
     parser.add_argument("--do_evaluate", action="store_true")
     args = parser.parse_args()
-    print('---Running results on top {}---'.format(args.top_k))
-    in_data_file = f'{args.data_dir}/multi_entity_visual_rag_final_v1.jsonl'
-    image_dir = f'{args.data_dir}/'
-    # image_dir = f'{args.data_dir}/images/'
+    
+    print('---Running VQA on top {}---'.format(args.top_k))
+
+    in_data_file = f'{args.data_dir}/visual-rag-me_final_v1.jsonl'
+    image_dir = f'{args.data_dir}/images/'
     in_data = [json.loads(line) for line in open(in_data_file).readlines()]
     
-
-    input_retrieval_data = json.load(open(args.input_file))
+    input_retrieval_data = json.load(open(args.retrieval_log))
+    
     # for multi-entity, need to regroup the retrieval data by 2
     assert len(input_retrieval_data) == 2*len(in_data)
     input_retrieval_data_grouped = []
@@ -64,9 +65,10 @@ if __name__ == '__main__':
     assert len(input_retrieval_data) == len(in_data)
     assert all([input_retrieval_data[i]['question'] == in_data[i]['question'] for i in range(len(input_retrieval_data))])
 
-    output_file_name = args.output_dir + 'qa_' + args.model_name + args.input_file.split('/')[-1].replace('.json', '_top{}.csv'.format(args.top_k))
-    if args.run_number is not None:
-        output_file_name = output_file_name.replace('.csv', '_run{}.csv'.format(args.run_number))
+    os.makedirs(args.output_dir, exist_ok=True)
+    output_file_name = args.output_dir + 'qa_' + args.model_name + args.retrieval_log.split('/')[-1].replace('.json', '_top{}.json'.format(args.top_k))
+    if args.run_id is not None:
+        output_file_name = output_file_name.replace('.json', '_run{}.json'.format(args.run_id))
     
     try:
         output_dict_list = json.load(open(in_data_file))
@@ -86,8 +88,8 @@ if __name__ == '__main__':
         output_dict['llm_eval_output'] = [] # output_dict['llm_eval_score'] = []
     
     if os.path.exists(output_file_name):
-        tmp_output_dict = pd.read_csv(output_file_name).to_dict('list')
-        keys = ['model_answer','topk_imgs_1','topk_scores_1','topk_imgs_2','topk_scores_2']
+        tmp_output_dict = pd.read_json(output_file_name).to_dict('list')
+        keys = ['model_answer', 'topk_imgs_1', 'topk_scores_1', 'topk_imgs_2', 'topk_scores_2']
         if args.do_evaluate:
             keys.append('llm_eval_output')
         for k in keys:
@@ -146,7 +148,5 @@ if __name__ == '__main__':
             pass
 
     output_dict_entry_orientation = [dict(zip(output_dict.keys(), t)) for t in zip(*output_dict.values())]
-    json.dump(output_dict_entry_orientation, open(output_file_name.replace('.csv', '.json'), 'w'), indent=4)
+    json.dump(output_dict_entry_orientation, open(output_file_name, 'w'), indent=4)
                              
-    output_df = pd.DataFrame.from_dict(output_dict)
-    output_df.to_csv(output_file_name, index=False)
