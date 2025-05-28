@@ -1,5 +1,10 @@
 # Visualize-then-Retrieve
-Official repository for the paper Visualized Text-to-Image Retrieval.
+<p align="center">
+  <a href="https://xiaowu0162.github.io/visret/"><img src="https://img.shields.io/badge/🌐-Website-red" height="23"></a>
+  <a href="https://arxiv.org/pdf/2505.20291.pdf"><img src="https://img.shields.io/badge/📝-Paper-blue" height="23"></a>
+</p>
+
+Official repository for the paper [Visualized Text-to-Image Retrieval](https://arxiv.org/pdf/2505.20291.pdf).
 
 ## Data Release
 
