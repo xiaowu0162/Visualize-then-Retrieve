@@ -4,7 +4,7 @@
   <a href="https://arxiv.org/pdf/2505.20291.pdf"><img src="https://img.shields.io/badge/📝-Paper-blue" height="23"></a>
 </p>
 
-Official repository for the paper [Visualized Text-to-Image Retrieval](https://arxiv.org/pdf/2505.20291.pdf).
+Official repository for the paper [VisRet: Visualization Improves Knowledge-Intensive Text-to-Image Retrieval](https://arxiv.org/pdf/2505.20291.pdf).
 
 ## Data Release
 
